@@ -1,45 +1,62 @@
-# ClearRoute SG — Presentation & Executive Summary for NEA
+# ClearRoute SG (v2.0) — Executive Briefing for NEA
 
-**Recipient:** National Environment Agency (NEA) / data.gov.sg Data Innovation Team  
-**Subject:** ClearRoute SG — Decision-Layer MVP for Singapore Air Quality Data
-
----
-
-## Executive Summary
-
-Singapore provides high-integrity, real-time air quality data (1-hour PM2.5 and 24-hour PSI across 5 regional sectors) via data.gov.sg. However, during elevated haze episodes, ordinary citizens and commuters face a persistent decision gap:
-
-> *"The PSI is 160, but I need to commute from Tampines to Marina Bay, or I want to exercise. When should I step outside, and how do I minimize my cumulative exposure?"*
-
-**ClearRoute SG** demonstrates how official NEA observations can be translated into **actionable timing and location decisions** rather than just reporting raw indices.
+**Prepared for:** National Environment Agency (NEA) Singapore / Meteorological Service Singapore (MSS) / Open Government Products  
+**Repository:** [https://github.com/ammaraamir1994/clearroute-sg](https://github.com/ammaraamir1994/clearroute-sg)  
+**Subject:** ClearRoute SG — Actionable Personal Decision Layer Built on Official NEA Real-Time Feeds
 
 ---
 
-## 1. Core Principles & Alignment with NEA Standards
+## 1. The Problem: The "Observation-to-Decision" Gap
 
-1. **Honest Regional Resolution (No False Hyperlocal Claims)**:
-   - ClearRoute strictly scopes its baseline measurements to the **5 official NEA monitoring regions** (Central, East, North, South, West) rather than extrapolating speculative street-level sensor numbers.
-2. **Clear Separation of Official vs. Derived Logic**:
-   - Official NEA bands and national advisories are preserved verbatim.
-   - Derived metrics (such as the Haze Exposure Score $\text{HES}$) are explicitly labeled as **activity ventilation models**, not individual medical prescriptions.
-3. **Behavioral Impact Over Raw Numbers**:
-   - Compares physical transit modes (e.g. MRT with 4 min outdoor walk vs. 25 min roadside walk) to show how commuters can achieve immediate ~75% particulate inhalation reductions.
+Singapore provides high-integrity environmental monitoring through myENV and data.gov.sg (1-hour $\text{PM}_{2.5}$, 24-hour PSI, rainfall, wind speed/direction, and air temperature). However, during elevated or transboundary haze episodes, citizens face a practical behavioral question that raw charts do not directly answer:
+
+> *"I need to commute from Tampines to Marina Bay, or I want to take my kids outside / go for a 5 km run today. Should I go now, wait a few hours, take a different transit mode, or use an indoor venue?"*
+
+**ClearRoute SG** is an open-source reference decision layer that translates official NEA real-time observations into **immediate location, route, and timing choices**.
 
 ---
 
-## 2. Technical Architecture
+## 2. Alignment with NEA Scientific & Public Communication Standards
 
-- **Backend**: Python 3.11+ / FastAPI
-- **Data Ingestion**: Official data.gov.sg REST API endpoints (`/v1/environment/pm25` & `/v1/environment/psi`) with in-memory caching and persistent observation history.
-- **Exposure Modeling**:
-  $$\text{HES} = \frac{\text{PM2.5} \times \text{OutdoorMinutes} \times \text{VentilationMultiplier}}{100}$$
-- **Timing Forecast (Clean Air Window)**: Diurnal particulate dispersion modeling identifying optimal low-exposure windows for daily planning.
-- **Frontend**: Clean single-page application with responsive UI and Leaflet geospatial visualization.
+1. **Honest Spatial Resolution (No False Hyperlocal Claims)**
+   - Rather than fabricating street-level precision from 5 regional stations, ClearRoute SG strictly anchors ambient air quality to **NEA's 5 official monitoring sectors** (*Central, East, North, South, West*).
+2. **Strict Separation of Official Data vs. Derived Models**
+   - Official NEA 1-hr $\text{PM}_{2.5}$ bands (Band I Normal $\le 55$, Band II Elevated $56\text{–}150$, Band III High $151\text{–}250$, Band IV Very High $>250\ \mu\text{g/m}^3$) are preserved verbatim.
+   - Derived metrics—such as estimated **Inhaled Particulate Dose ($\mu\text{g}$)** and **Haze Exposure Score ($\text{HES}$)**—are transparently labeled as **non-medical respiratory ventilation estimates**.
+3. **Medically Sound Protective Guidance**
+   - Explicitly warns users **never** to wear an N95 respirator during strenuous exercise (running/cycling), while advising appropriate N95 usage for prolonged low-exertion outdoor exposure in Elevated/High bands.
 
 ---
 
-## 3. Potential Collaboration Opportunities with NEA
+## 3. Core Technical Capabilities (v2.0)
 
-1. **Hyperlocal Sensor Network Integration**: Ingestion of temporary or municipal micro-sensor testbeds as NEA expands neighborhood monitoring.
-2. **Official Meteorological Coupling**: Integrating MSS (Meteorological Service Singapore) wind vector forecasts and precipitation radars into the route timing algorithm.
-3. **Public Health Communications**: Offering ClearRoute as an open-source reference implementation for public-facing advisories during transboundary haze events.
+### A. Activity-Specific Dosimetry ($\mu\text{g}$) & Sensitivity Profiles
+- Models respiratory minute ventilation from resting/commuting ($14\text{ L/min}$) up to strenuous running ($52\text{ L/min}$):
+  $$\text{Inhaled Dose ($\mu$g)} = \text{PM}_{2.5}\ (\mu\text{g/m}^3) \times \frac{\text{Ventilation (L/min)}}{1000} \times \text{Duration (min)}$$
+- Includes customizable duration ($15\text{–}180\text{ min}$) and sensitivity profiles (*Standard Adult* vs. *Sensitive / Asthma / Elderly / Children*).
+
+### B. 42-Hub Singapore Gazetteer & Sheltered Transit Routing
+- Evaluates real corridor distances and **Walk2Ride / Underground Hub Shelter Scores** across 42 major Singapore MRT interchanges, town hubs, and business parks.
+- Quantifies how switching from an open roadside bus/walk corridor to an **MRT + Underground Link** cuts inhaled particulate mass by **70–85%**.
+
+### C. Heat-vs-Haze Aware "Clean Air Window"
+- Ingests live NEA **Rainfall ($\text{mm}$)**, **Wind Speed/Direction**, and **Air Temperature ($^\circ\text{C}$)** alongside Singapore's diurnal boundary-layer dispersion curve.
+- Incorporates an **Equatorial Heat-Stress Guardrail**: when morning air is already clean ($\le 35\ \mu\text{g/m}^3$), it prevents advising runners to delay workouts into $33^\circ\text{C}$ midday heat.
+
+### D. Distance-Aware Cleanest Places & HEPA Indoor Refuges
+- Ranks 16 outdoor parks by regional $\text{PM}_{2.5}$ and Haversine distance ($\text{km}$), while surfacing **8 HEPA / Air-Conditioned Indoor Active Refuges** (e.g., *Singapore Sports Hub, Our Tampines Hub, Gardens by the Bay Conservatories, Jewel Changi, CityLink Underground Loop*) when outdoor haze is elevated.
+
+### E. Built-in Historical Haze Scenario Simulator
+- Because most days in Singapore enjoy Band I (Normal) air quality, a header toggle allows NEA reviewers to test system behavior across:
+  - 🟢 **Live NEA Real-Time API** (`data.gov.sg`)
+  - 🟠 **Oct 2023 East-Central Sector Plume** (Regional gradient scenario)
+  - 🟡 **Morning Inversion + Afternoon Rain Washout** (Timing optimization scenario)
+  - 🔴 **Sept 2015 El Niño Transboundary Crisis** (Band III/IV severe haze scenario)
+
+---
+
+## 4. Potential Collaboration Pathways with NEA
+
+1. **Public-Facing Decision Widget**: Integrating activity & commute exposure comparisons into myENV or public haze advisories.
+2. **Micro-Sensor & MSS Forecast Coupling**: Plugging in NEA's high-density neighborhood PM2.5 sensors or MSS numerical dispersion forecasts as drop-in replacements for the regional baseline.
+3. **Open-Source Civic Tech Reference**: Serving as a blueprint for how citizens can use `data.gov.sg` v2 real-time environmental APIs responsibly.
