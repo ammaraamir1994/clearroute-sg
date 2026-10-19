@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClearRoute SG — Haze-Safe Singapore Decision Layer</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Leaflet CSS & JS for Interactive SG Air Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap');
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background-color: #0b0f17;
+      color: #e2e8f0;
+    }
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .glass-card {
+      background: rgba(17, 24, 39, 0.82);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .glass-card-hover:hover {
+      border-color: rgba(16, 185, 129, 0.35);
+      transform: translateY(-1px);
+      transition: all 0.2s ease-in-out;
+    }
+    #map {
+      height: 400px;
+      border-radius: 1rem;
+      z-index: 10;
+    }
+    .leaflet-container {
+      background: #0f172a;
+    }
+    input[type="range"] {
+      accent-color: #10b981;
+    }
+  </style>
+</head>
+<body class="min-h-screen pb-16">
+  <!-- Top Header Navigation -->
+  <header class="border-b border-gray-800 bg-gray-950/90 sticky top-0 z-50 backdrop-blur-md">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+            <i data-lucide="shield-check" class="text-white w-6 h-6"></i>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <h1 class="text-lg font-extrabold tracking-tight text-white">ClearRoute <span class="text-emerald-400">SG</span></h1>
+              <span class="text-[10px] font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800/60 px-2 py-0.5 rounded-full uppercase tracking-wider">v2.0 Decision Engine</span>
+            </div>
+            <p class="text-xs text-gray-400">Turning official NEA air & weather data into personal timing, route & dose decisions</p>
+          </div>
+        </div>
+        <button onclick="refreshAllData()" class="md:hidden p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300">
+          <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2.5">
+        <!-- Scenario Simulator Selector (Allows testing real haze events on clear days) -->
+        <div class="flex items-center space-x-2 bg-gray-900 border border-gray-800 rounded-xl px-2.5 py-1.5">
+          <i data-lucide="layers" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i>
+          <span class="text-[11px] text-gray-400 font-semibold uppercase hidden sm:inline">Data Mode:</span>
+          <select id="scenario-select" onchange="onScenarioChange(this.value)" class="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer">
+            <option value="live" class="bg-gray-900 text-white">🟢 Live NEA Real-Time API</option>
+            <option value="east_plume_2023" class="bg-gray-900 text-white">🟠 Sim: Oct 2023 East-Central Plume</option>
+            <option value="morning_inversion" class="bg-gray-900 text-white">🟡 Sim: Morning Inversion + Rain Washout</option>
+            <option value="severe_2015" class="bg-gray-900 text-white">🔴 Sim: Sept 2015 Severe El Niño Haze</option>
+          </select>
+        </div>
+
+        <!-- Live status indicator -->
+        <div id="live-status-pill" class="flex items-center space-x-2 bg-gray-900 border border-gray-800 px-3 py-1.5 rounded-full text-xs">
+          <span id="status-dot-ping" class="relative flex h-2 w-2">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <span id="live-status-text" class="text-gray-300 font-medium">NEA Live Feed</span>
+        </div>
+
+        <!-- Refresh Button -->
+        <button onclick="refreshAllData()" title="Refresh Data" class="hidden md:flex p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition">
+          <i data-lucide="refresh-cw" class="w-4 h-4" id="refresh-icon"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Active Simulation Notice Banner -->
+    <div id="simulation-banner" class="hidden bg-amber-500/10 border-t border-amber-500/30 px-4 py-2 text-xs text-amber-300">
+      <div class="max-w-6xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="flask-conical" class="w-4 h-4 text-amber-400 shrink-0"></i>
+          <span id="simulation-banner-text">Simulation mode active for testing decision thresholds.</span>
+        </div>
+        <button onclick="onScenarioChange('live'); document.getElementById('scenario-select').value='live';" class="text-[11px] font-bold underline text-amber-200 hover:text-white shrink-0">
+          Return to Live NEA API →
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="max-w-6xl mx-auto px-4 mt-6 space-y-6">
+    
+    <!-- Hero Location, Weather & Clean Window Bar -->
+    <div class="glass-card rounded-2xl p-5 border border-emerald-500/20 bg-gradient-to-r from-gray-950 via-gray-900 to-emerald-950/20">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+        <!-- Region Picker (5 cols) -->
+        <div class="lg:col-span-5 space-y-1.5">
+          <div class="flex items-center space-x-2 text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+            <i data-lucide="map-pin" class="w-3.5 h-3.5"></i>
+            <span>Your Singapore Sector</span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2.5">
+            <select id="user-region-select" onchange="onRegionChange(this.value)" class="bg-gray-800/90 text-white font-bold text-base rounded-xl px-3 py-2 border border-gray-700 focus:outline-none focus:border-emerald-500 transition">
+              <option value="central">Central (Marina Bay, Orchard, Bishan)</option>
+              <option value="east">East (Tampines, Bedok, Changi)</option>
+              <option value="north">North (Woodlands, Yishun, Punggol)</option>
+              <option value="south">South (HarbourFront, Sentosa, Queenstown)</option>
+              <option value="west">West (Jurong East, Clementi, Boon Lay)</option>
+            </select>
+            <div id="current-region-badge" class="px-3 py-1.5 rounded-xl font-bold text-xs bg-gray-900 border border-gray-700">
+              Loading...
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Meteorological Dispersion Pill (3 cols) -->
+        <div class="lg:col-span-3 bg-gray-900/80 border border-gray-800 rounded-xl p-3 flex items-center space-x-3">
+          <div class="p-2 bg-cyan-500/10 rounded-lg text-cyan-400 shrink-0">
+            <i data-lucide="wind" class="w-5 h-5"></i>
+          </div>
+          <div class="min-w-0">
+            <div class="text-[10px] text-gray-400 uppercase font-semibold">Live Dispersion Weather</div>
+            <div id="hero-weather-summary" class="text-xs text-white font-bold truncate">Loading NEA weather...</div>
+            <div id="hero-weather-sub" class="text-[11px] text-cyan-300/80 truncate">Checking rainfall & wind...</div>
+          </div>
+        </div>
+
+        <!-- Clean Air Window Quick Banner (4 cols) -->
+        <div class="lg:col-span-4 bg-gray-900/90 border border-gray-800 rounded-xl p-3 flex items-center space-x-3">
+          <div class="p-2 bg-emerald-500/10 rounded-lg text-emerald-400 shrink-0">
+            <i data-lucide="clock" class="w-5 h-5"></i>
+          </div>
+          <div class="min-w-0">
+            <div class="text-[10px] text-gray-400 uppercase font-semibold">Heat & Haze Optimal Window</div>
+            <div id="hero-clean-window-text" class="text-xs text-white font-bold">Calculating best outdoor window...</div>
+            <div id="hero-clean-window-sub" class="text-[11px] text-gray-400 truncate">Balances PM2.5 & equatorial heat</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="flex flex-wrap gap-2 border-b border-gray-800 pb-2">
+      <button onclick="switchTab('decision')" id="tab-btn-decision" class="tab-btn px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center space-x-2">
+        <i data-lucide="activity" class="w-4 h-4"></i>
+        <span>Should I Go Outside?</span>
+      </button>
+      <button onclick="switchTab('routing')" id="tab-btn-routing" class="tab-btn px-4 py-2 text-sm font-semibold rounded-lg text-gray-400 hover:text-white hover:bg-gray-800/60 flex items-center space-x-2 transition">
+        <i data-lucide="navigation" class="w-4 h-4"></i>
+        <span>Low-Exposure Route (A to B)</span>
+      </button>
+      <button onclick="switchTab('places')" id="tab-btn-places" class="tab-btn px-4 py-2 text-sm font-semibold rounded-lg text-gray-400 hover:text-white hover:bg-gray-800/60 flex items-center space-x-2 transition">
+        <i data-lucide="trees" class="w-4 h-4"></i>
+        <span>Cleanest Places & Indoor Refuges</span>
+      </button>
+      <button onclick="switchTab('map')" id="tab-btn-map" class="tab-btn px-4 py-2 text-sm font-semibold rounded-lg text-gray-400 hover:text-white hover:bg-gray-800/60 flex items-center space-x-2 transition">
+        <i data-lucide="map" class="w-4 h-4"></i>
+        <span>Singapore 5-Region Haze Map</span>
+      </button>
+    </div>
+
+    <!-- SECTION 1: "SHOULD I GO OUTSIDE NOW?" (DECISION CARD + DOSIMETRY + CONTROLS) -->
+    <section id="section-decision" class="space-y-6">
+      <div class="glass-card rounded-2xl p-6 space-y-6">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h2 class="text-xl font-bold text-white">1. What do you want to do?</h2>
+            <p class="text-xs text-gray-400">Select an activity, customize your duration, and set your respiratory sensitivity profile</p>
+          </div>
+
+          <!-- Personalization Controls: Duration Slider & Sensitivity Profile -->
+          <div class="flex flex-wrap items-center gap-4 bg-gray-900/90 border border-gray-800 px-4 py-2.5 rounded-xl">
+            <!-- Duration Slider -->
+            <div class="flex items-center space-x-3">
+              <label for="duration-slider" class="text-xs font-semibold text-gray-300 flex items-center space-x-1">
+                <i data-lucide="timer" class="w-3.5 h-3.5 text-emerald-400"></i>
+                <span>Duration:</span>
+                <span id="duration-label" class="mono font-bold text-emerald-400">35 min</span>
+              </label>
+              <input type="range" id="duration-slider" min="15" max="180" step="5" value="35"
+                oninput="onDurationInput(this.value)" onchange="fetchDecision()"
+                class="w-28 cursor-pointer" />
+            </div>
+
+            <div class="h-4 w-px bg-gray-800 hidden sm:block"></div>
+
+            <!-- Sensitivity Toggle -->
+            <div class="flex items-center space-x-2">
+              <span class="text-xs font-semibold text-gray-300">Profile:</span>
+              <div class="inline-flex rounded-lg bg-gray-950 p-0.5 border border-gray-800 text-xs">
+                <button id="sens-btn-standard" onclick="setSensitivity('standard')" class="px-2.5 py-1 rounded-md font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition">
+                  Standard Adult
+                </button>
+                <button id="sens-btn-sensitive" onclick="setSensitivity('sensitive')" class="px-2.5 py-1 rounded-md font-semibold text-gray-400 hover:text-white transition">
+                  Sensitive / Asthma / Elderly
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Activity Selection Grid -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3" id="activity-selector-grid">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Big Decision Card Presentation -->
+        <div id="big-decision-card" class="rounded-2xl p-6 border transition-all duration-300 relative overflow-hidden bg-gray-900/90 border-gray-800">
+          <div class="animate-pulse space-y-4">
+            <div class="h-6 bg-gray-800 rounded w-1/4"></div>
+            <div class="h-10 bg-gray-800 rounded w-1/2"></div>
+            <div class="h-20 bg-gray-800 rounded w-full"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: LOW-EXPOSURE JOURNEY PLANNER (A to B) -->
+    <section id="section-routing" class="hidden space-y-6">
+      <div class="glass-card rounded-2xl p-6">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
+          <div>
+            <h2 class="text-xl font-bold text-white flex items-center space-x-2">
+              <i data-lucide="route" class="text-emerald-400 w-5 h-5"></i>
+              <span>Smart Singapore Low-Exposure Journey Planner</span>
+            </h2>
+            <p class="text-xs text-gray-400">
+              Auto-detects coordinates, MRT lines & underground linkway shelter across <strong class="text-gray-200">40+ Singapore locations</strong> to minimize inhaled PM2.5 (µg)
+            </p>
+          </div>
+
+          <!-- One-Click Popular Commute Presets -->
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="text-[11px] text-gray-400 font-semibold mr-1">Try Route:</span>
+            <button onclick="setQuickRoute('Tampines', 'Marina Bay')" class="text-[11px] px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 transition">
+              Tampines → Marina Bay
+            </button>
+            <button onclick="setQuickRoute('Jurong East', 'Orchard')" class="text-[11px] px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 transition">
+              Jurong East → Orchard
+            </button>
+            <button onclick="setQuickRoute('Bugis', 'City Hall')" class="text-[11px] px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 transition">
+              Bugis → City Hall (Short Walk vs MRT)
+            </button>
+            <button onclick="setQuickRoute('Woodlands', 'Raffles Place')" class="text-[11px] px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 transition">
+              Woodlands → Raffles Place
+            </button>
+          </div>
+        </div>
+
+        <!-- Gazetteer Autocomplete Datalist -->
+        <datalist id="sg-locations-datalist"></datalist>
+
+        <!-- Origin and Destination Form -->
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 rounded-xl bg-gray-900/70 border border-gray-800 mb-6 items-end">
+          <div class="md:col-span-5">
+            <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">📍 Origin (MRT Hub, Town or Landmark)</label>
+            <input type="text" id="route-origin-input" list="sg-locations-datalist" value="Tampines" placeholder="e.g. Tampines, Jurong East, NUS, Bishan..."
+              class="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500" />
+          </div>
+          <div class="md:col-span-5">
+            <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">🎯 Destination (MRT Hub, Town or Landmark)</label>
+            <input type="text" id="route-dest-input" list="sg-locations-datalist" value="Marina Bay" placeholder="e.g. Marina Bay, Orchard, Changi Airport..."
+              class="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500" />
+          </div>
+          <div class="md:col-span-2">
+            <button onclick="calculateRoute()" class="w-full px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-gray-950 font-extrabold text-sm rounded-lg flex items-center justify-center space-x-1.5 transition shadow-lg shadow-emerald-500/20">
+              <i data-lucide="calculator" class="w-4 h-4"></i>
+              <span>Compare</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Route Comparison Results -->
+        <div id="route-results-container" class="space-y-4">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3: CLEANEST NEARBY PLACES & INDOOR REFUGES -->
+    <section id="section-places" class="hidden space-y-6">
+      <div class="glass-card rounded-2xl p-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div>
+            <h2 class="text-xl font-bold text-white flex items-center space-x-2">
+              <i data-lucide="trees" class="text-emerald-400 w-5 h-5"></i>
+              <span>Cleanest Places & HEPA Indoor Refuges</span>
+            </h2>
+            <p class="text-xs text-gray-400">Ranked by effective PM2.5 concentration and distance (km) from your current region</p>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-xs text-gray-400">Venue Type:</span>
+            <select id="place-category-filter" onchange="renderCleanPlaces()" class="bg-gray-800 text-white text-xs font-semibold rounded-lg px-3 py-2 border border-gray-700">
+              <option value="all">All Recommended (Outdoor + Top Indoor Refuges)</option>
+              <option value="indoor">❄️ Indoor Air-Filtered Refuges Only (HEPA / AC)</option>
+              <option value="park">🌳 Outdoor Parks & Gardens</option>
+              <option value="nature">🥾 Nature Reserves & Trails</option>
+              <option value="outdoor">🌊 Waterfronts & Coastal Beaches</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="places-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4: LIVE SINGAPORE HAZE MAP -->
+    <section id="section-map" class="hidden space-y-6">
+      <div class="glass-card rounded-2xl p-6">
+        <div class="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 class="text-xl font-bold text-white flex items-center space-x-2">
+              <i data-lucide="map" class="text-emerald-400 w-5 h-5"></i>
+              <span>Official 5-Region Air Quality & Dispersion Map</span>
+            </h2>
+            <p class="text-xs text-gray-400">
+              Official NEA 1-hr PM2.5 (µg/m³) & 24-hr PSI across Singapore's 5 geographic monitoring sectors
+            </p>
+          </div>
+          <div class="text-[11px] text-gray-400 bg-gray-900 border border-gray-800 px-3 py-1.5 rounded-lg flex items-center space-x-1.5">
+            <i data-lucide="info" class="w-3.5 h-3.5 text-emerald-400"></i>
+            <span>Honest regional resolution: Reflects official NEA 5 monitoring sectors</span>
+          </div>
+        </div>
+
+        <!-- Leaflet Map Container -->
+        <div id="map" class="border border-gray-800"></div>
+
+        <!-- 5 Regions Summary Cards -->
+        <div id="regions-summary-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mt-6">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer Disclaimers & Open Data Attribution -->
+    <footer class="pt-6 border-t border-gray-800/80 text-center text-xs text-gray-500 space-y-2">
+      <p class="text-gray-400 font-semibold">ClearRoute SG — Public-Interest Decision Layer for Haze Events</p>
+      <p>
+        Contains information from datasets accessed from <a href="https://data.gov.sg" target="_blank" class="text-emerald-400 hover:underline">data.gov.sg</a>
+        (National Environment Agency 1-hr PM2.5, 24-hr PSI & Meteorological APIs) made available under the terms of the
+        <a href="https://data.gov.sg/open-data-licence" target="_blank" class="text-emerald-400 hover:underline">Singapore Open Data Licence v1.0</a>.
+      </p>
+      <p class="text-[11px] text-gray-500">
+        Disclaimer: Inhaled dose (µg) and Haze Exposure Score (HES) are non-medical respiratory ventilation models and do not constitute clinical medical advice.
+      </p>
+    </footer>
+  </main>
+
+  <!-- Interactive JavaScript logic -->
+  <script>
+    // State
+    let currentRegion = 'central';
+    let currentActivity = 'run';
+    let currentDuration = 35;
+    let currentSensitivity = 'standard';
+    let currentScenario = 'live';
+    let airData = null;
+    let mapInstance = null;
+    let mapMarkers = [];
+
+    const ACTIVITIES = [
+      { id: 'run', label: 'Run', icon: 'zap', defaultMins: 35, lpm: '52 L/min' },
+      { id: 'walk', label: 'Walk', icon: 'footprints', defaultMins: 25, lpm: '18 L/min' },
+      { id: 'cycle', label: 'Cycle', icon: 'bike', defaultMins: 45, lpm: '36 L/min' },
+      { id: 'commute', label: 'Commute', icon: 'train', defaultMins: 30, lpm: '14 L/min' },
+      { id: 'park', label: 'Visit Park', icon: 'trees', defaultMins: 45, lpm: '14 L/min' },
+      { id: 'sports', label: 'Sports', icon: 'trophy', defaultMins: 60, lpm: '48 L/min' },
+      { id: 'kids', label: 'Kids Out', icon: 'smile', defaultMins: 40, lpm: '22 L/min' }
+    ];
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      renderActivitySelector();
+      await loadGazetteerLocations();
+      await refreshAllData();
+      lucide.createIcons();
+    });
+
+    async function loadGazetteerLocations() {
+      try {
+        const res = await fetch('/api/locations');
+        const data = await res.json();
+        const dl = document.getElementById('sg-locations-datalist');
+        if (dl && data.locations) {
+          dl.innerHTML = data.locations.map(loc =>
+            `<option value="${loc.name}">${loc.name} (${loc.region.toUpperCase()} • ${loc.mrt})</option>`
+          ).join('');
+        }
+      } catch (e) {
+        console.error('Could not load gazetteer locations', e);
+      }
+    }
+
+    function renderActivitySelector() {
+      const container = document.getElementById('activity-selector-grid');
+      container.innerHTML = ACTIVITIES.map(act => `
+        <button onclick="selectActivity('${act.id}', ${act.defaultMins})" id="act-btn-${act.id}"
+          class="activity-card p-3 rounded-xl border text-left transition flex flex-col justify-between ${
+            currentActivity === act.id
+              ? 'bg-emerald-500/20 border-emerald-500 text-white shadow-md shadow-emerald-500/10'
+              : 'bg-gray-900/60 border-gray-800 text-gray-400 hover:border-gray-700 hover:text-gray-200'
+          }">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-bold">${act.label}</span>
+            <i data-lucide="${act.icon}" class="w-4 h-4"></i>
+          </div>
+          <div class="flex items-center justify-between text-[10px] text-gray-400">
+            <span>~${act.defaultMins}m</span>
+            <span class="mono">${act.lpm}</span>
+          </div>
+        </button>
+      `).join('');
+      lucide.createIcons();
+    }
+
+    function selectActivity(actId, defaultMins) {
+      currentActivity = actId;
+      currentDuration = defaultMins;
+      const slider = document.getElementById('duration-slider');
+      const label = document.getElementById('duration-label');
+      if (slider) slider.value = defaultMins;
+      if (label) label.textContent = `${defaultMins} min`;
+      renderActivitySelector();
+      fetchDecision();
+      fetchCleanWindow();
+    }
+
+    function onDurationInput(val) {
+      currentDuration = parseInt(val, 10);
+      const label = document.getElementById('duration-label');
+      if (label) label.textContent = `${currentDuration} min`;
+    }
+
+    function setSensitivity(sens) {
+      currentSensitivity = sens;
+      const stdBtn = document.getElementById('sens-btn-standard');
+      const sensBtn = document.getElementById('sens-btn-sensitive');
+      if (sens === 'standard') {
+        stdBtn.className = 'px-2.5 py-1 rounded-md font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition';
+        sensBtn.className = 'px-2.5 py-1 rounded-md font-semibold text-gray-400 hover:text-white transition';
+      } else {
+        sensBtn.className = 'px-2.5 py-1 rounded-md font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 transition';
+        stdBtn.className = 'px-2.5 py-1 rounded-md font-semibold text-gray-400 hover:text-white transition';
+      }
+      fetchDecision();
+    }
+
+    function onScenarioChange(scen) {
+      currentScenario = scen;
+      refreshAllData();
+    }
+
+    function onRegionChange(reg) {
+      currentRegion = reg;
+      updateRegionBadge();
+      fetchDecision();
+      fetchCleanWindow();
+      renderCleanPlaces();
+    }
+
+    function setQuickRoute(orig, dest) {
+      document.getElementById('route-origin-input').value = orig;
+      document.getElementById('route-dest-input').value = dest;
+      calculateRoute();
+    }
+
+    function updateRegionBadge() {
+      if (!airData || !airData.regions) return;
+      const rObj = airData.regions.find(r => r.region === currentRegion);
+      if (rObj) {
+        const badgeEl = document.getElementById('current-region-badge');
+        badgeEl.innerHTML = `<span class="mono">${rObj.pm25_1hr.toFixed(0)} µg/m³</span> • ${rObj.band.badge}`;
+        badgeEl.style.borderColor = rObj.band.color;
+        badgeEl.style.color = rObj.band.color;
+      }
+
+      // Update Weather Banner
+      if (airData.weather) {
+        const w = airData.weather;
+        const wSum = document.getElementById('hero-weather-summary');
+        const wSub = document.getElementById('hero-weather-sub');
+        wSum.textContent = `${w.temp_c}°C • ${w.wind_direction} Wind ${w.wind_speed_kmh} km/h`;
+        wSub.textContent = w.rainfall_mm > 0 ? `🌧️ Rainfall: ${w.rainfall_mm} mm (Wet washout)` : w.condition;
+      }
+
+      // Update Simulation Banner & Live Status Pill
+      const simBanner = document.getElementById('simulation-banner');
+      const simText = document.getElementById('simulation-banner-text');
+      const liveText = document.getElementById('live-status-text');
+      if (airData.is_simulation && airData.scenario_meta) {
+        simBanner.classList.remove('hidden');
+        simText.innerHTML = `<strong>${airData.scenario_meta.name}:</strong> ${airData.scenario_meta.description}`;
+        liveText.textContent = 'Scenario Simulation';
+      } else {
+        simBanner.classList.add('hidden');
+        liveText.textContent = airData.is_live ? 'NEA Live API Connected' : 'NEA Snapshot Connected';
+      }
+    }
+
+    async function refreshAllData() {
+      const refreshIcon = document.getElementById('refresh-icon');
+      if (refreshIcon) refreshIcon.classList.add('animate-spin');
+
+      try {
+        const res = await fetch(`/api/air-quality?scenario=${currentScenario}`);
+        airData = await res.json();
+
+        updateRegionBadge();
+        await Promise.all([
+          fetchDecision(),
+          fetchCleanWindow(),
+          renderCleanPlaces(),
+          calculateRoute()
+        ]);
+        renderMapRegions();
+      } catch (err) {
+        console.error('Failed to load air data', err);
+      } finally {
+        if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+      }
+    }
+
+    async function fetchDecision() {
+      const cardEl = document.getElementById('big-decision-card');
+      try {
+        const url = `/api/decision?activity=${currentActivity}&region=${currentRegion}&duration_mins=${currentDuration}&sensitivity=${currentSensitivity}&scenario=${currentScenario}`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        const statusBg =
+          data.status === 'GO' ? 'border-emerald-500/40 bg-emerald-950/15' :
+          data.status === 'MONITOR' || data.status === 'DELAY' || data.status === 'REDUCE_EXPOSURE' ? 'border-amber-500/40 bg-amber-950/15' :
+          'border-rose-500/40 bg-rose-950/20';
+
+        cardEl.className = `rounded-2xl p-6 border transition-all duration-300 relative overflow-hidden ${statusBg}`;
+
+        const regionalEscapeHtml = data.regional_escape ? `
+          <div class="p-3 rounded-xl bg-cyan-950/40 border border-cyan-700/40 flex items-center justify-between text-xs">
+            <div class="flex items-center space-x-2">
+              <i data-lucide="compass" class="w-4 h-4 text-cyan-400 shrink-0"></i>
+              <span class="text-cyan-100"><strong>Cleaner Sector Nearby:</strong> ${data.regional_escape.note}</span>
+            </div>
+            <button onclick="document.getElementById('user-region-select').value='${data.regional_escape.region}'; onRegionChange('${data.regional_escape.region}');"
+              class="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 font-bold shrink-0 ml-2">
+              Switch to ${data.regional_escape.region_name} →
+            </button>
+          </div>
+        ` : '';
+
+        cardEl.innerHTML = `
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <!-- Left 8 columns: Main Recommendation, Dosimetry & Protection -->
+            <div class="lg:col-span-8 space-y-4">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center space-x-3">
+                  <span class="text-3xl">${data.activity_icon}</span>
+                  <div>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <h3 class="text-xl font-extrabold text-white">${data.duration_mins}-Min ${data.activity_label} in ${data.region_name}</h3>
+                      <span class="px-2.5 py-0.5 rounded-full text-xs font-bold" style="background:${data.band.color}20; color:${data.band.color}; border: 1px solid ${data.band.color}40">
+                        ${data.band.badge}
+                      </span>
+                    </div>
+                    <p class="text-xs text-gray-400 mt-0.5">
+                      Official 1-hr PM2.5: <strong class="text-white mono">${data.pm25_1hr.toFixed(0)} µg/m³</strong> • ${data.protective_guidance.who_context}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Recommendation headline & guidance -->
+              <div class="p-4 rounded-xl bg-gray-950/80 border border-gray-800 space-y-1.5">
+                <div class="text-lg font-extrabold" style="color: ${data.color}">
+                  ${data.action_headline}
+                </div>
+                <p class="text-sm text-gray-300 leading-relaxed">
+                  ${data.guidance}
+                </p>
+              </div>
+
+              <!-- 3-Way Choice Comparison: Do It Now vs. Clean Window vs. Indoor Filtered Refuge -->
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <!-- Option 1: Outdoors Now -->
+                <div class="p-3.5 rounded-xl bg-gray-900/90 border border-gray-800 flex flex-col justify-between">
+                  <div>
+                    <div class="text-[11px] font-semibold text-gray-400 uppercase">Option 1: Outdoors Now</div>
+                    <div class="mt-2 flex items-baseline justify-between">
+                      <span class="text-xs text-gray-400">Inhaled PM2.5</span>
+                      <span class="mono font-extrabold text-base" style="color: ${data.color}">${data.dosimetry.inhaled_ug} µg</span>
+                    </div>
+                    <div class="mt-1 flex items-baseline justify-between text-[11px] text-gray-400">
+                      <span>Exposure Score</span>
+                      <span class="mono font-bold text-gray-200">${data.derived_hes} HES</span>
+                    </div>
+                  </div>
+                  <div class="mt-2 pt-2 border-t border-gray-800 text-[11px] text-gray-400">
+                    Breathing ~${data.dosimetry.ventilation_lpm} L/min (${data.dosimetry.total_air_liters}L air)
+                  </div>
+                </div>
+
+                <!-- Option 2: Optimal Time Window -->
+                <div class="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-700/40 flex flex-col justify-between">
+                  <div>
+                    <div class="text-[11px] font-semibold text-emerald-400 uppercase flex items-center justify-between">
+                      <span>Option 2: Best Window</span>
+                      <span class="text-[10px] bg-emerald-900/80 px-1.5 py-0.5 rounded text-emerald-300">Timing</span>
+                    </div>
+                    <div class="mt-2 flex items-baseline justify-between">
+                      <span class="text-xs text-gray-300 font-semibold">${data.clean_air_window.best_window}</span>
+                      <span class="mono font-extrabold text-base text-emerald-400">${data.later_dosimetry.inhaled_ug} µg</span>
+                    </div>
+                    <div class="mt-1 flex items-baseline justify-between text-[11px] text-gray-400">
+                      <span>Forecast PM2.5</span>
+                      <span class="mono font-bold text-emerald-300">~${Math.round(data.clean_air_window.best_pm25_avg)} µg/m³</span>
+                    </div>
+                  </div>
+                  <div class="mt-2 pt-2 border-t border-emerald-800/40 text-[11px] text-emerald-300/90">
+                    ${data.clean_air_window.heat_note}
+                  </div>
+                </div>
+
+                <!-- Option 3: Indoor Filtered Refuge -->
+                <div class="p-3.5 rounded-xl bg-blue-950/30 border border-blue-700/40 flex flex-col justify-between">
+                  <div>
+                    <div class="text-[11px] font-semibold text-blue-400 uppercase flex items-center justify-between">
+                      <span>Option 3: Indoor Filtered</span>
+                      <span class="text-[10px] bg-blue-900/80 px-1.5 py-0.5 rounded text-blue-300">HEPA / AC</span>
+                    </div>
+                    <div class="mt-1.5 text-xs font-bold text-white line-clamp-1" title="${data.indoor_refuge.name}">
+                      ${data.indoor_refuge.name}
+                    </div>
+                    <div class="mt-1 flex items-baseline justify-between text-[11px] text-gray-300">
+                      <span>Effective Air</span>
+                      <span class="mono font-bold text-blue-400">~${data.indoor_refuge.effective_pm25} µg/m³</span>
+                    </div>
+                  </div>
+                  <div class="mt-2 pt-2 border-t border-blue-800/40 text-[11px] text-blue-300/90 line-clamp-1">
+                    ${data.indoor_refuge.env_note}
+                  </div>
+                </div>
+              </div>
+
+              ${regionalEscapeHtml}
+
+              <!-- Practical Mask & Indoor Air Purifier Guidance -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div class="p-3 rounded-xl bg-gray-950/70 border border-gray-800/90 flex items-start space-x-2.5 text-xs">
+                  <i data-lucide="shield-alert" class="w-4 h-4 text-emerald-400 shrink-0 mt-0.5"></i>
+                  <div>
+                    <span class="font-bold text-gray-200 block">Mask & Respiratory Guidance</span>
+                    <span class="text-gray-400 text-[11px] leading-snug">${data.protective_guidance.mask_guidance}</span>
+                  </div>
+                </div>
+                <div class="p-3 rounded-xl bg-gray-950/70 border border-gray-800/90 flex items-start space-x-2.5 text-xs">
+                  <i data-lucide="home" class="w-4 h-4 text-cyan-400 shrink-0 mt-0.5"></i>
+                  <div>
+                    <span class="font-bold text-gray-200 block">Indoor / Home Ventilation Tip</span>
+                    <span class="text-gray-400 text-[11px] leading-snug">${data.protective_guidance.indoor_guidance}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right 4 columns: 6-Hour Diurnal Dispersion & Thermal Trend -->
+            <div class="lg:col-span-4 bg-gray-950/85 border border-gray-800 p-4 rounded-xl flex flex-col justify-between space-y-4">
+              <div>
+                <div class="text-xs font-bold text-gray-200 flex items-center justify-between mb-1">
+                  <span>6-Hour PM2.5 & Thermal Forecast</span>
+                  <span class="text-[10px] text-emerald-400 mono">Multi-Factor</span>
+                </div>
+                <p class="text-[11px] text-gray-400 mb-3">Accounts for boundary layer mixing, rain washout & midday heat</p>
+                <div class="space-y-2.5">
+                  ${data.forecast_12hr.map(f => `
+                    <div class="flex items-center justify-between text-xs p-1.5 rounded-lg bg-gray-900/70 border border-gray-800/60">
+                      <div class="flex items-center space-x-2">
+                        <span class="text-gray-300 font-semibold mono">${f.time_label}</span>
+                        <span class="text-[10px] px-1.5 py-0.5 rounded ${
+                          f.heat_stress === 'HIGH_HEAT'
+                            ? 'bg-orange-500/20 text-orange-300'
+                            : 'bg-gray-800 text-gray-400'
+                        }">
+                          ${f.temp_c}°C ${f.heat_stress === 'HIGH_HEAT' ? '☀️ Hot' : ''}
+                        </span>
+                      </div>
+                      <div class="flex items-center space-x-2">
+                        <span class="mono font-bold" style="color:${f.band.color}">${f.pm25.toFixed(0)} µg/m³</span>
+                        <span class="w-2.5 h-2.5 rounded-full" style="background:${f.band.color}"></span>
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+
+              <div class="text-[10px] text-gray-400 border-t border-gray-800 pt-2.5 flex items-center justify-between">
+                <span>Official NEA Observation</span>
+                <span>Non-Medical Dosimetry Model</span>
+              </div>
+            </div>
+          </div>
+        `;
+        lucide.createIcons();
+      } catch (e) {
+        console.error('Error fetching decision card', e);
+      }
+    }
+
+    async function fetchCleanWindow() {
+      try {
+        const res = await fetch(`/api/clean-window?region=${currentRegion}&activity=${currentActivity}&scenario=${currentScenario}`);
+        const data = await res.json();
+        const bannerText = document.getElementById('hero-clean-window-text');
+        const bannerSub = document.getElementById('hero-clean-window-sub');
+        if (data.window.reduction_pct > 0) {
+          bannerText.innerHTML = `<span class="text-emerald-400">${data.window.best_window}</span> (~${data.window.reduction_pct}% lower PM2.5)`;
+        } else {
+          bannerText.innerHTML = `<span class="text-emerald-400">${data.window.best_window}</span> (Cleanest window is now)`;
+        }
+        bannerSub.textContent = data.window.heat_note || 'Balances PM2.5 dispersion & thermal comfort';
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function calculateRoute() {
+      const orig = document.getElementById('route-origin-input').value || 'Tampines';
+      const dest = document.getElementById('route-dest-input').value || 'Marina Bay';
+      const container = document.getElementById('route-results-container');
+
+      try {
+        const res = await fetch(`/api/route-planner?origin=${encodeURIComponent(orig)}&destination=${encodeURIComponent(dest)}&scenario=${currentScenario}`);
+        const data = await res.json();
+
+        container.innerHTML = `
+          <!-- Auto-detected Gazetteer Route Summary Header -->
+          <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-xs">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-bold text-white">📍 ${data.origin}</span>
+              <span class="text-[11px] px-2 py-0.5 rounded bg-gray-800 text-gray-300">${data.origin_region} (${data.origin_pm25} µg/m³) • ${data.origin_hub_type}</span>
+              <span class="text-emerald-400 font-bold">→</span>
+              <span class="font-bold text-white">🎯 ${data.destination}</span>
+              <span class="text-[11px] px-2 py-0.5 rounded bg-gray-800 text-gray-300">${data.dest_region} (${data.dest_pm25} µg/m³) • ${data.dest_hub_type}</span>
+            </div>
+            <div class="mono text-emerald-400 font-bold">
+              Corridor Distance: ${data.distance_km} km
+            </div>
+          </div>
+
+          <!-- Best Option Card -->
+          <div class="p-5 rounded-2xl border-2 border-emerald-500/60 bg-gradient-to-r from-emerald-950/40 via-gray-900 to-gray-900 relative mt-3">
+            <div class="absolute -top-3 right-6 bg-emerald-500 text-gray-950 font-black text-xs px-3 py-0.5 rounded-full uppercase tracking-wider shadow">
+              ★ Lowest Inhaled Dose Choice
+            </div>
+
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <div class="flex items-center space-x-2">
+                  <span class="text-2xl">${data.routes[0].icon}</span>
+                  <h3 class="text-lg font-bold text-white">${data.routes[0].name}</h3>
+                </div>
+                <p class="text-xs text-gray-400 mt-1">${data.routes[0].transit_type}</p>
+                <div class="flex flex-wrap items-center gap-4 mt-3 text-xs">
+                  <span class="text-gray-300">Total Time: <strong class="text-white">${data.routes[0].total_min} min</strong> (${data.distance_km} km)</span>
+                  <span class="text-emerald-400">Exposed Outdoor Walk: <strong>${data.routes[0].outdoor_min} min</strong> (${data.routes[0].outdoor_pct})</span>
+                  <span class="text-gray-400">Filtered MRT/Underground: <strong>${data.routes[0].indoor_min} min</strong></span>
+                </div>
+              </div>
+
+              <div class="text-left md:text-right bg-gray-950/70 p-3 rounded-xl border border-gray-800">
+                <div class="text-[10px] text-gray-400 uppercase font-semibold">Estimated Inhaled PM2.5</div>
+                <div class="text-2xl font-black text-emerald-400 mono">${data.routes[0].inhaled_ug} µg <span class="text-xs font-normal text-gray-400">(${data.routes[0].exposure_score} HES)</span></div>
+                <div class="text-xs font-bold text-emerald-400 mt-0.5">${data.routes[0].badge}</div>
+              </div>
+            </div>
+
+            <!-- Route Steps -->
+            <div class="mt-4 pt-4 border-t border-gray-800 text-xs text-gray-300 space-y-1.5">
+              ${data.routes[0].steps.map(s => `
+                <div class="flex items-center space-x-2">
+                  <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i>
+                  <span>${s}</span>
+                </div>
+              `).join('')}
+            </div>
+
+            <!-- Timing alternative box inside best option -->
+            <div class="mt-4 p-3 rounded-xl bg-gray-950 border border-gray-800 flex flex-col sm:flex-row sm:items-center justify-between text-xs gap-2">
+              <div class="flex items-center space-x-2">
+                <i data-lucide="calendar-clock" class="w-4 h-4 text-emerald-400"></i>
+                <span class="text-gray-300">Optimal Departure Window: <strong>${data.timing_optimization.clean_window}</strong></span>
+              </div>
+              <span class="text-emerald-400 font-semibold">${data.timing_optimization.advice}</span>
+            </div>
+          </div>
+
+          <!-- Comparison Cards for Other Modes -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+            ${data.routes.slice(1).map(r => `
+              <div class="glass-card rounded-xl p-4 border border-gray-800 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center space-x-2">
+                      <span class="text-xl">${r.icon}</span>
+                      <h4 class="font-bold text-white text-sm">${r.name}</h4>
+                    </div>
+                    <span class="text-[11px] font-bold px-2 py-0.5 rounded shrink-0" style="color:${r.badge_color}; background:${r.badge_color}15">
+                      ${r.badge}
+                    </span>
+                  </div>
+                  <div class="flex flex-wrap items-center justify-between mt-3 text-xs bg-gray-900/80 px-3 py-2 rounded-lg border border-gray-800">
+                    <span class="text-gray-300">Time: <strong>${r.total_min} min</strong></span>
+                    <span class="text-rose-400">Outdoor: <strong>${r.outdoor_min} min</strong> (${r.outdoor_pct})</span>
+                    <span class="mono font-black" style="color:${r.badge_color}">Inhaled: ${r.inhaled_ug} µg (${r.exposure_score} HES)</span>
+                  </div>
+                  <div class="mt-3 text-[11px] text-gray-400 space-y-1">
+                    ${r.steps.map(s => `<div>• ${s}</div>`).join('')}
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+        lucide.createIcons();
+      } catch (err) {
+        console.error('Error calculating route', err);
+      }
+    }
+
+    async function renderCleanPlaces() {
+      const cat = document.getElementById('place-category-filter').value;
+      const container = document.getElementById('places-list');
+      try {
+        const res = await fetch(`/api/clean-places?region=${currentRegion}&category=${cat}&duration_mins=${currentDuration}&scenario=${currentScenario}`);
+        const data = await res.json();
+
+        container.innerHTML = data.places.map((p, idx) => `
+          <div class="glass-card rounded-xl p-4 border ${p.is_indoor ? 'border-blue-500/30 bg-blue-950/10' : 'border-gray-800'} flex flex-col justify-between glass-card-hover">
+            <div>
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex items-center space-x-2">
+                  <span class="text-xs font-bold text-gray-400 mono">#${idx + 1}</span>
+                  <h4 class="font-bold text-white text-sm">${p.name}</h4>
+                </div>
+                <span class="text-[11px] px-2 py-0.5 rounded-full font-bold shrink-0" style="background:${p.band.color}20; color:${p.band.color}">
+                  ${p.is_indoor ? '❄️ Filtered Indoor' : p.band.badge}
+                </span>
+              </div>
+              <div class="text-xs text-gray-400 mt-2 flex flex-wrap items-center gap-2">
+                <span>📍 ${p.region_name}</span>
+                <span>•</span>
+                <span class="mono text-white font-semibold">Effective: ${p.pm25_1hr.toFixed(0)} µg/m³</span>
+                ${p.is_indoor ? `<span class="text-[10px] text-blue-300">(Outdoor: ${p.outdoor_regional_pm25.toFixed(0)} µg/m³)</span>` : ''}
+              </div>
+              <p class="text-[11px] text-gray-400 mt-2 leading-snug">${p.env_note || ''}</p>
+            </div>
+
+            <div class="mt-4 pt-3 border-t border-gray-800/80 flex items-center justify-between text-xs">
+              <span class="text-gray-300 font-medium">${p.proximity_note}</span>
+              <span class="mono font-bold" style="color:${p.band.color}">${p.inhaled_ug} µg inhaled</span>
+            </div>
+          </div>
+        `).join('');
+        lucide.createIcons();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function renderMapRegions() {
+      if (!airData || !airData.regions) return;
+
+      const grid = document.getElementById('regions-summary-grid');
+      grid.innerHTML = airData.regions.map(r => `
+        <div class="glass-card p-3.5 rounded-xl border ${r.region === currentRegion ? 'border-emerald-500/60' : 'border-gray-800'} cursor-pointer hover:border-emerald-500 transition"
+          onclick="document.getElementById('user-region-select').value='${r.region}'; onRegionChange('${r.region}');">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-white uppercase">${r.name}</span>
+            <span class="w-2.5 h-2.5 rounded-full" style="background:${r.band.color}"></span>
+          </div>
+          <div class="text-2xl font-black mono mt-2" style="color:${r.band.color}">
+            ${r.pm25_1hr.toFixed(0)} <span class="text-[10px] text-gray-400 font-normal">µg/m³ (1h)</span>
+          </div>
+          <div class="text-[11px] text-gray-400 mt-1 flex items-center justify-between">
+            <span>24h PSI: <strong class="text-gray-200">${r.psi_24hr.toFixed(0)}</strong></span>
+            <span class="text-[10px]" style="color:${r.band.color}">${r.band.level}</span>
+          </div>
+        </div>
+      `).join('');
+
+      if (mapInstance) {
+        updateMapMarkers();
+      } else {
+        initMap();
+      }
+    }
+
+    function initMap() {
+      const mapDiv = document.getElementById('map');
+      if (!mapDiv || mapInstance) return;
+
+      mapInstance = L.map('map', {
+        center: [1.3521, 103.8198],
+        zoom: 11,
+        zoomControl: true
+      });
+
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; CartoDB, &copy; OpenStreetMap contributors | Data: NEA Singapore',
+        maxZoom: 18
+      }).addTo(mapInstance);
+
+      updateMapMarkers();
+    }
+
+    function updateMapMarkers() {
+      if (!mapInstance || !airData) return;
+
+      mapMarkers.forEach(m => mapInstance.removeLayer(m));
+      mapMarkers = [];
+
+      airData.regions.forEach(r => {
+        const circle = L.circle([r.lat, r.lon], {
+          color: r.band.color,
+          fillColor: r.band.color,
+          fillOpacity: 0.35,
+          radius: 4800
+        }).addTo(mapInstance);
+
+        const marker = L.marker([r.lat, r.lon]).addTo(mapInstance)
+          .bindPopup(`
+            <div style="font-family:'Plus Jakarta Sans',sans-serif; color:#111; padding:4px;">
+              <h4 style="font-weight:bold; margin:0 0 4px 0;">NEA ${r.name} Sector</h4>
+              <div><strong>1-hr PM2.5:</strong> ${r.pm25_1hr.toFixed(0)} µg/m³</div>
+              <div><strong>24-hr PSI:</strong> ${r.psi_24hr.toFixed(0)}</div>
+              <div><strong>Official Tier:</strong> ${r.band.nea_band || r.band.badge}</div>
+              <div style="font-size:11px; color:#555; margin-top:4px;">${r.description}</div>
+            </div>
+          `);
+
+        mapMarkers.push(circle);
+        mapMarkers.push(marker);
+      });
+    }
+
+    function switchTab(tabKey) {
+      const sections = ['decision', 'routing', 'places', 'map'];
+      sections.forEach(s => {
+        const el = document.getElementById(`section-${s}`);
+        const btn = document.getElementById(`tab-btn-${s}`);
+        if (s === tabKey) {
+          el.classList.remove('hidden');
+          btn.className = 'tab-btn px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center space-x-2';
+        } else {
+          el.classList.add('hidden');
+          btn.className = 'tab-btn px-4 py-2 text-sm font-semibold rounded-lg text-gray-400 hover:text-white hover:bg-gray-800/60 flex items-center space-x-2 transition';
+        }
+      });
+
+      if (tabKey === 'map') {
+        setTimeout(() => {
+          if (!mapInstance) initMap();
+          else mapInstance.invalidateSize();
+        }, 100);
+      }
+    }
+  </script>
+</body>
+</html>
